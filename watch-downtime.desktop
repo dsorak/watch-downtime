@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Exec=python3 /home/dan/Projects/Personal/watch-downtime/watch-downtime.py --dark --logfile /home/dan/downtime.log
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=Downtime Monitor
+Comment=Starts the downtime monitor at login
+Icon=/home/dan/Projects/Personal/watch-downtime/watch-downtime.png
