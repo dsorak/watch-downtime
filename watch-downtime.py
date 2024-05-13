@@ -312,7 +312,7 @@ try:
     ani = animation.FuncAnimation(fig, update, interval=SAMPLING_INTERVAL * 1000, cache_frame_data=False)
 
     try:
-        plt.get_current_fig_manager().set_window_title('Network Downtime Monitor')
+        plt.get_current_fig_manager().set_window_title('Network Downtime Monitor') # type: ignore
     except Exception as e:
         print("Unable to set window title: " + str(e), file=sys.stderr)
 
