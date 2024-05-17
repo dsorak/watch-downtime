@@ -1,9 +1,15 @@
 [Desktop Entry]
 Type=Application
-Exec=python3 ${HOME}/bin/watch-downtime.py --dark --logfile ${HOME}/downtime.log
+Categories=Utility;Application
+Name=Downtime Monitor
+Icon=/home/dan/.local/share/icons/watch-downtime.png
+Exec=/home/dan/bin/watch-downtime.py --dark --log-file /home/dan/downtime.log
+Version=1.0
+Terminal=false
 Hidden=false
 NoDisplay=false
+Comment=Start the downtime monitor at login if added to /home/dan/.config/autostart/watch-downtime.desktop, or place it on the desktop by copying to /home/dan/Desktop/watch-downtime.desktop (Ubuntu)
 X-GNOME-Autostart-enabled=true
-Name=Downtime Monitor
-Comment=Start the downtime monitor at login if added to ${HOME}/.config/autostart/watch-downtime.desktop, or place it on the desktop by copying to ${HOME}/Desktop/watch-downtime.desktop (Ubuntu)
-Icon=${HOME}/.local/share/icons/watch-downtime.png
+X-GNOME-Autostart-Delay=10
+X-MATE-Autostart-Delay=10
+X-KDE-autostart-after=panelStartupNotify=false

@@ -21,6 +21,7 @@
 import argparse
 import datetime
 import logging
+import logging.handlers
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,10 +33,6 @@ from collections import deque
 from pathlib import Path
 
 
-def signal_handler(sig, frame):
-    plt.close('all')  # Close the matplotlib window
-
-
 def set_log_level(level_name):
     # Convert the level name to an actual logging level
     try:
@@ -44,7 +41,7 @@ def set_log_level(level_name):
         raise ValueError(f"Invalid log level: {level_name}")
 
 
-def parse_time(value:str):
+def parse_time(value: str) -> int:
     """Parses a time string with a suffix to convert it to seconds.
     Supported suffixes: s for seconds, m for minutes, h for hours, d for days.
 
@@ -108,16 +105,16 @@ def seconds_to_hms(seconds:int):
     time = []
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
-    if (hours > 0):
+    if hours > 0:
         time.append(str(hours) + "h")
-    if (minutes > 0):
+    if minutes > 0:
         time.append(str(minutes) + "m")
-    if (seconds > 0):
+    if seconds > 0:
         time.append(str(seconds) + "s")
     return " ".join(time)
 
 
-def ping_host(target_host:str):
+def ping_host(target_host:str) -> str | float:
     """Ping the host and return the latency.
 
     Args:
@@ -134,200 +131,212 @@ def ping_host(target_host:str):
             capture_output=True  # Captures both stdout and stderr
         )
         if result.returncode != 0:
-            err_msg = f" ({str(result.stderr).strip()})" if result.stderr else "Unknown"
-            # with open(logfile, "a") as f: # Log downtime
-            #     f.write(f"{datetime.datetime.now()} - {target_host}: DOWN{err_msg}\n")
-            return None, err_msg
+            err_msg = str(result.stderr).strip() if result.stderr else "Unknown"
+            return err_msg
         time_ms = float(result.stdout.split("time=")[1].split(" ms")[0])  # Extract the time
-        return time_ms, None
+        return time_ms
     except Exception as e:
-        # with open(logfile, "a") as f: # Log downtime
-        #     f.write(f"{datetime.datetime.now()} - {target_host}: EXCEPTION ({str(e)})\n")
-        return None, str(e)
+        return str(e)
 
 
-def update(frame, *fargs):
+def update(frame, times:deque, latencies:deque, warnings:deque, downtimes:deque, interval:int, threshold:int, target_host:str, *fargs):
     """Update the plot with new data and log to the logfile."""
-    now = datetime.datetime.now() #.timestamp()  # Current timestamp
-    latency, err_msg = ping_host(target_host=TARGET_HOST)
 
-    TIMES.append(now)
-    if latency is None: # TARGET_HOST ping failed
-        LATENCIES.append(0)  # Use 0 for downtime
-        WARNINGS.append(False)  # No warning when downtime
-        DOWNTIMES.append(True)  # Downtimes are when latency is None
-        with open(LOG_FILE, "a") as f: # Log downtime
-            f.write(f"{datetime.datetime.now()} - {TARGET_HOST}: DOWN ({err_msg})\n")
-    else:
-        LATENCIES.append(latency)
-        if latency > LATENCY_THRESHOLD:
-            WARNINGS.append(True)  # Warning for latency greater than threshold
-            with open(LOG_FILE, "a") as f:
-                f.write(f"{now} - {TARGET_HOST}: {latency}ms\n")
+    result = ping_host(target_host=target_host)
+
+    times.append(datetime.datetime.now())
+    if result is str: # TARGET_HOST ping failed
+        latencies.append(0)  # Use 0 for downtime
+        warnings.append(False)  # No warning when downtime
+        downtimes.append(True)  # Downtimes are when latency is None
+        logging.info(f"{target_host}: DOWN ({result})")
+    elif result is float:
+        latencies.append(result)
+        if result > threshold:
+            warnings.append(True)  # Warning for latency greater than threshold
+            logging.warning(f"{target_host}: {result}ms")
         else:
-            WARNINGS.append(False)
-        DOWNTIMES.append(False)
+            warnings.append(False)
+            logging.debug(f"{target_host}: {result}ms")
+        downtimes.append(False)
 
     # Convert to numpy arrays for easier manipulation
-    times_np = np.array(TIMES)
-    latencies_np = np.array(LATENCIES)
+    times_np = np.array(times)
+    latencies_np = np.array(latencies)
 
     # Update the line data
     line.set_data(times_np, latencies_np)
-    ax.set_xlim(times_np[0], max(times_np[-1], times_np[0] + datetime.timedelta(seconds=SAMPLING_INTERVAL)))
+    ax.set_xlim(times_np[0], max(times_np[-1], times_np[0] + datetime.timedelta(seconds=interval)))
 
     # Dynamically adjust y-axis
-    upper_limit = max(max(latencies_np) + 10, LATENCY_THRESHOLD)
+    upper_limit = max(max(latencies_np) + 10, threshold)
     ax.set_ylim(0, upper_limit)
 
     # Highlight downtime and warning areas
-    ax.fill_between(times_np, 0, upper_limit, where=np.array(DOWNTIMES), step='pre', color='red')
-    ax.fill_between(times_np, 0, upper_limit, where=np.array(WARNINGS), step='pre', color='orange')
+    ax.fill_between(times_np, 0, upper_limit, where=np.array(downtimes), step='pre', color='red')
+    ax.fill_between(times_np, 0, upper_limit, where=np.array(warnings), step='pre', color='orange')
 
     return line,
 
 
-class UltimateHelpFormatter(argparse.RawTextHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
-    pass
+def parse_args() -> argparse.Namespace:
+
+    class UltimateHelpFormatter(argparse.RawTextHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
+        pass
+
+    parser = argparse.ArgumentParser(
+        description="Monitor internet connection for downtime or unacceptable latency",
+        formatter_class=UltimateHelpFormatter
+    )
+    parser.add_argument(
+        "--host",
+        metavar="<host/ip>",
+        help="Hostname to ping for downtime testing",
+        default="google.com"
+    )
+    parser.add_argument(
+        "--interval",
+        metavar="<span>",
+        help="""The ping interval in seconds, or use a suffix (E.g. '1m'):
+        's': Seconds
+        'm': Minutes
+        'h': Hours
+        'd': Days
+        'w': Weeks
+    """,
+        type=parse_time,
+        default='15s'
+    )
+    parser.add_argument(
+        "--threshold",
+        metavar="<ms>",
+        help="The 'warning' latency threshold for logging (in ms). If this threshold is exceeded, a log entry will be made.",
+        type=int,
+        default=100
+    )
+    parser.add_argument(
+        "--window",
+        metavar="<span>",
+        help="""The graph window in seconds, or use a suffix (E.g. '2d'):
+        's': Seconds
+        'm': Minutes
+        'h': Hours
+        'd': Days
+        'w': Weeks
+    """,
+        type=parse_time,
+        default='24h'
+    )
+    parser.add_argument(
+        "--dark",
+        action='store_true',
+        help='Enable dark mode'
+    )
+    parser.add_argument(
+        "--log-console",
+        action='store_true',
+        help="Log output to the console (stderr)"
+    )
+    parser.add_argument(
+        "--log-file",
+        metavar="<file>",
+        help="Logfile in which to log downtime",
+        type=writable_file,
+    )
+    parser.add_argument(
+        "--log-level",
+        metavar="<level>",
+        help="""Sets the logging level and must be one of: CRITICAL, FATAL, ERROR, WARNING, INFO, DEBUG, NOTSET
+    If not specified, the environment variable "LOGLEVEL" will be used (if set).""",
+        type=set_log_level,
+        default=os.environ.get('LOGLEVEL', 'INFO')
+    )
+    return parser.parse_args()
 
 
-parser = argparse.ArgumentParser(
-    description="Monitor internet connection for downtime or unacceptable latency",
-    formatter_class=UltimateHelpFormatter
-)
-parser.add_argument(
-    "--host",
-    metavar="<host/ip>",
-    help="Hostname to ping for downtime testing",
-    default="google.com"
-)
-parser.add_argument(
-    "--logfile",
-    metavar="<file>",
-    help="Logfile in which to log downtime",
-    type=writable_file,
-    default="./downtime_log.txt"
-)
-parser.add_argument(
-    "--interval",
-    metavar="<span>",
-    help="""The ping interval in seconds, or use a suffix (E.g. '1m'):
-    's': Seconds
-    'm': Minutes
-    'h': Hours
-    'd': Days
-    'w': Weeks
-""",
-    type=parse_time,
-    default='15s'
-)
-parser.add_argument(
-    "--threshold",
-    metavar="<ms>",
-    help="The 'warning' latency threshold for logging (in ms). If this threshold is exceeded, a log entry will be made.",
-    type=int,
-    default=100
-)
-parser.add_argument(
-    "--window",
-    metavar="<span>",
-    help="""The graph window in seconds, or use a suffix (E.g. '2d'):
-    's': Seconds
-    'm': Minutes
-    'h': Hours
-    'd': Days
-    'w': Weeks
-""",
-    type=parse_time,
-    default='24h'
-)
-parser.add_argument(
-    "--dark",
-    action='store_true',
-    help='Enable dark mode'
-)
-parser.add_argument(
-    "--log-level",
-    metavar="<level>",
-    help="""Sets the logging level and must be one of: CRITICAL, FATAL, ERROR, WARNING, INFO, DEBUG, NOTSET
-If not specified, the environment variable "LOGLEVEL" will be used (if set).""",
-    type=set_log_level,
-    default=os.environ.get('LOGLEVEL', 'ERROR')
-)
-try:
-    args = parser.parse_args()
-except argparse.ArgumentError as e:
-    parser.error(str(e))
+def signal_handler(sig, frame):
+    plt.close('all')  # Close the matplotlib window
 
-# Constants
-TARGET_HOST = args.host
-LOG_FILE = args.logfile
-SAMPLING_INTERVAL = int(args.interval) # seconds
-if args.window < SAMPLING_INTERVAL:
-    args.window = SAMPLING_INTERVAL * 2
-    print(f"Window cannot be smaller than 2x <interval>, setting window to: {seconds_to_hms(args.window)}", file=sys.stderr)
-WINDOW_POINTS = args.window // SAMPLING_INTERVAL # The number of "window" points to display
-LATENCY_THRESHOLD = args.threshold
-MAX_POINTS = (60 / 15) * 60 * 24  # Set a reasonable limit to the number of points that the chart can display (15s interval, over 24h)
-START_TIME = datetime.datetime.now()
 
-# Deques to store the time and latency data
-TIMES = deque(maxlen=WINDOW_POINTS)
-LATENCIES = deque(maxlen=WINDOW_POINTS)
-WARNINGS = deque(maxlen=WINDOW_POINTS)
-DOWNTIMES = deque(maxlen=WINDOW_POINTS)
-
-try:
-    logging.basicConfig(level=args.log_level)
-
-    if WINDOW_POINTS > MAX_POINTS:  # If the plot has too many points, it will be identified as unresponsive by the system
-        print(f"Please reduce the window ({seconds_to_hms(args.window)}) or increase the interval ({SAMPLING_INTERVAL}s) to display less than {MAX_POINTS} points. Current settings yield: {WINDOW_POINTS} points", file=sys.stderr)
-        sys.exit(0)
-
-    print(f"Starting network downtime watch:")
-    print(f"    Ping Host:       {TARGET_HOST}")
-    print(f"    Logfile:         {LOG_FILE}")
-    print(f"    Sample Interval: {SAMPLING_INTERVAL}s")
-    print(f"    Latency Warning: {LATENCY_THRESHOLD}ms")
-    print(f"    Plot Window:     {seconds_to_hms(args.window)}")
-    print(f"    Plot Points:     {WINDOW_POINTS}")
-
-    # Initialize plot
-    fig, ax = plt.subplots()
-    fig.patch.set_facecolor('#303030' if args.dark else 'white')  # Set the figure background color
-    ax.set_facecolor('#505050' if args.dark else 'white')  # Set the axes background color
-
-    line, = ax.plot([], [], lw=2)
-    ax.set_ylim(0, LATENCY_THRESHOLD)  # Initial y-axis limit, will adjust dynamically
-    ax.set_xlim(0, WINDOW_POINTS * SAMPLING_INTERVAL)
-    ax.set_xlabel('Time', color='white' if args.dark else 'black')
-    ax.set_ylabel('Ping Latency (ms)', color='white' if args.dark else 'black')
-    ax.tick_params(axis='x', colors='white' if args.dark else 'black')
-    ax.tick_params(axis='y', colors='white' if args.dark else 'black')
-
-    plt.xticks(rotation=90)  # Rotate x-axis labels to 90 degrees
-    plt.subplots_adjust(left=0.1, right=0.99, top=0.99, bottom=0.2)  # Adjust the bottom to prevent label cutoff
-
-    # Create animation
-    ani = animation.FuncAnimation(fig, update, interval=SAMPLING_INTERVAL * 1000, cache_frame_data=False)
-
+if __name__ == '__main__':
+    start_time = datetime.datetime.now()
     try:
-        plt.get_current_fig_manager().set_window_title('Network Downtime Monitor') # type: ignore
+        args = parse_args()
+        kwargs = vars(args)
+
+        log_handlers:list[logging.FileHandler | logging.StreamHandler] = []
+        if args.log_console:
+            # print("Adding console logging", file=sys.stderr)
+            stream_handler = logging.StreamHandler(sys.stderr)
+            stream_handler.setLevel(args.log_level)
+            log_handlers.append(stream_handler)
+        if args.log_file:
+            # print(f"Adding file logging: {args.log_file}", file=sys.stderr)
+            file_handler = logging.FileHandler(filename=args.log_file)
+            file_handler.setLevel(args.log_level)
+            log_handlers.append(file_handler)
+
+        # print(f"Configuring logging: level={logging.getLevelName(args.log_level)}", file=sys.stderr)
+        level_width = max(len(name) for name in logging._levelToName.values())
+        logging.basicConfig(level=args.log_level,
+                            handlers=log_handlers if log_handlers else None,
+                            # format=f'%(asctime)s|%(name)s|%(levelname)-{level_width}s|%(message)s',
+                            format=f'%(asctime)s|%(levelname)-{level_width}s|%(message)s',
+                            datefmt='%Y-%m-%d %H:%M:%S%z'
+        )
+
+        if args.window < args.interval:
+            args.window = args.interval * 2
+            logging.warning(f"Window cannot be smaller than 2x <interval>, setting window to: {seconds_to_hms(args.window)}")
+        window_points = args.window // args.interval # The number of "window" points to display
+        max_points = (60 // 15) * 60 * 24  # Set a reasonable limit to the number of points that the chart can display (15s interval, over 24h)
+
+        if window_points > max_points:  # If the plot has too many points, it will be identified as unresponsive by the system
+            logging.warning(f"Plotting window is too large: {window_points} points (reducing to {max_points} points)")
+            window_points = max_points
+
+        fig, ax = plt.subplots()
+        fig.patch.set_facecolor('#303030' if args.dark else 'white')  # Set the figure background color
+        ax.set_facecolor('#505050' if args.dark else 'white')  # Set the axes background color
+
+        line, = ax.plot([], [], lw=2)
+        ax.set_ylim(0, args.threshold)  # Initial y-axis limit, will adjust dynamically
+        ax.set_xlim(0, window_points * args.interval)
+        ax.set_xlabel('Time', color='white' if args.dark else 'black')
+        ax.set_ylabel('Ping Latency (ms)', color='white' if args.dark else 'black')
+        ax.tick_params(axis='x', colors='white' if args.dark else 'black')
+        ax.tick_params(axis='y', colors='white' if args.dark else 'black')
+
+        plt.xticks(rotation=90)  # Rotate x-axis labels to 90 degrees
+        plt.subplots_adjust(left=0.1, right=0.99, top=0.99, bottom=0.2)  # Adjust the bottom to prevent label cutoff
+
+        # Deques to store the time and latency data
+        times = deque(maxlen=window_points)
+        latencies = deque(maxlen=window_points)
+        warnings = deque(maxlen=window_points)
+        downtimes = deque(maxlen=window_points)
+
+        # Create animation
+        ani = animation.FuncAnimation(fig,
+                                      func=update,
+                                      interval=args.interval * 1000,
+                                      fargs=(times, latencies, warnings, downtimes, args.interval, args.threshold, args.host),
+                                      cache_frame_data=False
+        )
+        try:
+            plt.get_current_fig_manager().set_window_title('Network Downtime Monitor') # type: ignore
+        except Exception as e:
+            logging.exception(msg="Unable to set window title")
+
+        logging.info(f"Monitoring started: {__file__}: {kwargs}")
+
+        # Register the signal handler
+        signal.signal(signal.SIGINT, signal_handler)
+        plt.show()
+
     except Exception as e:
-        print("Unable to set window title: " + str(e), file=sys.stderr)
-
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{datetime.datetime.now()} - Monitoring started\n")
-
-    # Register the signal handler
-    signal.signal(signal.SIGINT, signal_handler)
-    plt.show()
-
-except Exception as e:
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{datetime.datetime.now()} - Unexpected exception: {str(e)}\n")
-
-elapsed = seconds_to_hms(int((datetime.datetime.now()-START_TIME).total_seconds()))
-print(f"\nStopping network downtime watch after {elapsed}")
-with open(LOG_FILE, "a") as f:
-    f.write(f"{datetime.datetime.now()} - Monitoring stopped (Elapsed: {elapsed})\n")
+        logging.exception(msg="Unexpected exception")
+        
+    finally:
+        elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
+        logging.info(f"Monitoring stopped: Watched for {elapsed}")

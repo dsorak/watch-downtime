@@ -3,6 +3,7 @@
         "Deques",
         "facecolor",
         "fargs",
+        "levelname",
         "logfile",
         "LOGLEVEL",
         "NOTSET",
