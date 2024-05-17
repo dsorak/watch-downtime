@@ -33,7 +33,7 @@ from collections import deque
 from pathlib import Path
 
 
-def set_log_level(level_name):
+def set_log_level(level_name) -> int:
     # Convert the level name to an actual logging level
     try:
         return getattr(logging, level_name.upper())
@@ -100,7 +100,7 @@ def writable_file(filepath) -> Path:
         raise argparse.ArgumentTypeError(f"Unable to access: {path.absolute()} ({str(e)})")
 
 
-def seconds_to_hms(seconds:int):
+def seconds_to_hms(seconds:int) -> str:
     """Convert seconds to a human-readable format of hours, minutes, and seconds."""
     time = []
     hours, remainder = divmod(seconds, 3600)
