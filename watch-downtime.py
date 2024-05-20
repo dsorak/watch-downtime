@@ -131,10 +131,8 @@ def ping_host(target_host:str) -> str | float:
             capture_output=True  # Captures both stdout and stderr
         )
         if result.returncode != 0:
-            err_msg = str(result.stderr).strip() if result.stderr else "Unknown"
-            return err_msg
-        time_ms = float(result.stdout.split("time=")[1].split(" ms")[0])  # Extract the time
-        return time_ms
+            return result.stderr.strip() if result.stderr else result.stdout.strip() if result.stdout else "Unknown"
+        return float(result.stdout.split("time=")[1].split(" ms")[0])  # Extract the time
     except Exception as e:
         return str(e)
 
@@ -145,12 +143,7 @@ def update(frame, times:deque, latencies:deque, warnings:deque, downtimes:deque,
     result = ping_host(target_host=target_host)
 
     times.append(datetime.datetime.now())
-    if result is str: # TARGET_HOST ping failed
-        latencies.append(0)  # Use 0 for downtime
-        warnings.append(False)  # No warning when downtime
-        downtimes.append(True)  # Downtimes are when latency is None
-        logging.info(f"{target_host}: DOWN ({result})")
-    elif result is float:
+    if isinstance(result, float):  # target_host ping succeeded
         latencies.append(result)
         if result > threshold:
             warnings.append(True)  # Warning for latency greater than threshold
@@ -159,6 +152,13 @@ def update(frame, times:deque, latencies:deque, warnings:deque, downtimes:deque,
             warnings.append(False)
             logging.debug(f"{target_host}: {result}ms")
         downtimes.append(False)
+    elif isinstance(result, str):  # target_host ping failed
+        latencies.append(0)  # Use 0 for downtime
+        warnings.append(False)  # No warning when downtime
+        downtimes.append(True)  # Downtimes are when latency is None
+        logging.error(f"{target_host}: DOWN ({result})")
+    else:
+        raise Exception("Unknown return type from ping_host(): " + type(result).__name__)
 
     # Convert to numpy arrays for easier manipulation
     times_np = np.array(times)
@@ -336,7 +336,7 @@ if __name__ == '__main__':
 
     except Exception as e:
         logging.exception(msg="Unexpected exception")
-        
+
     finally:
         elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
         logging.info(f"Monitoring stopped: Watched for {elapsed}")
