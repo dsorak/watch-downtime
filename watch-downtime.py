@@ -34,11 +34,11 @@ import sys
 from collections import deque
 from pathlib import Path
 from time import sleep
-from typing import NamedTuple
+from typing import NamedTuple, List, Any
 
 
-def set_log_level(level_name) -> int:
-    # Convert the level name to an actual logging level
+def set_log_level(level_name: str) -> int:
+    """Convert the level name to an actual logging level"""
     try:
         return getattr(logging, level_name.upper())
     except AttributeError:
@@ -62,7 +62,7 @@ def parse_time(value: str) -> int:
     if value[-1].isdigit():  # Check if there's no suffix and assume seconds
         return int(value)
     else:
-        units = { # Conversion factors
+        units = {  # Conversion factors
             's': 1,
             'm': 60,
             'h': 60 * 60,
@@ -76,7 +76,7 @@ def parse_time(value: str) -> int:
             raise ValueError(f"Invalid time unit '{unit}' in '{value}'. Use 's', 'm', 'h', 'd', or 'w'.")
 
 
-def writable_file(filepath) -> Path:
+def writable_file(filepath: str) -> Path:
     """Check if the given path refers to a writeable file, or if it does not exist, try to create it as writeable.
 
     Args:
@@ -97,7 +97,6 @@ def writable_file(filepath) -> Path:
                 pass
         else:  # If the file does not exist, try creating it (also checks directory write-ability indirectly)
             path.touch()
-            # path.unlink()  # Clean up immediately after creating
         return path.absolute()
     except PermissionError as e:
         raise argparse.ArgumentTypeError(f"Insufficient permissions: {path.absolute()} ({str(e)})")
@@ -105,7 +104,7 @@ def writable_file(filepath) -> Path:
         raise argparse.ArgumentTypeError(f"Unable to access: {path.absolute()} ({str(e)})")
 
 
-def seconds_to_hms(seconds:int) -> str:
+def seconds_to_hms(seconds: int) -> str:
     """Convert seconds to a human-readable format of hours, minutes, and seconds."""
     time = []
     hours, remainder = divmod(seconds, 3600)
@@ -120,7 +119,7 @@ def seconds_to_hms(seconds:int) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-
+    """Parse command line arguments"""
     class UltimateHelpFormatter(argparse.RawTextHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
         pass
 
@@ -128,7 +127,7 @@ def parse_args() -> argparse.Namespace:
         description="Monitor internet connection for downtime or unacceptable latency",
         formatter_class=UltimateHelpFormatter
     )
-    required_actions: list[argparse.Action] = []
+    required_actions: List[argparse.Action] = []
     parser.add_argument(
         "--host",
         metavar="<host/ip>",
@@ -184,7 +183,7 @@ def parse_args() -> argparse.Namespace:
             If not set, a plot window will not be created.
         """,
             type=parse_time,
-            const='12h'
+            const='5h'
         )
     )
     parser.add_argument(
@@ -215,12 +214,13 @@ def parse_args() -> argparse.Namespace:
 
     return result
 
+
 class Pinger:
     """Base class for pinging a remote host, capturing latency, and logging
     downtime, warnings, or all results (based upon the logging level)
     """
 
-    def __init__(self, target_host:str, threshold:float):
+    def __init__(self, target_host: str, threshold: float):
         self.target_host = target_host
         self.threshold = threshold
 
@@ -245,7 +245,7 @@ class Pinger:
             if result.returncode != 0:
                 msg = result.stderr.strip()
                 if not msg:
-                    lines:list[str] = result.stdout.strip().split("\n")
+                    lines: List[str] = result.stdout.strip().split("\n")
                     msg = lines[-1]
                 if not msg:
                     msg = "Timed out"
@@ -263,11 +263,12 @@ class Pinger:
 
 
 class Plotter(Pinger):
+    """Class for plotting the latency and downtime of the network"""
 
     MAX_POINTS = 1800
-    THRESHOLD_PLOT_BUFFER = 10 # ms
+    THRESHOLD_PLOT_BUFFER = 10  # ms
 
-    def __init__(self, target_host:str, threshold:float, interval:int, window:int, dark_mode:bool):
+    def __init__(self, target_host: str, threshold: float, interval: int, window: int, dark_mode: bool):
         super().__init__(target_host=target_host, threshold=threshold)
 
         self.interval = interval
@@ -302,7 +303,6 @@ class Plotter(Pinger):
 
         self.line, = self.ax.plot([], [], lw=2)
         self.ax.set_ylim(0, self.threshold + self.THRESHOLD_PLOT_BUFFER)
-        # self.ax.set_xlim(0, window_points * interval)
         self.ax.set_xlabel('Time', color='white' if dark_mode else 'black')
         self.ax.set_ylabel('Ping Latency (ms)', color='white' if dark_mode else 'black')
         self.ax.tick_params(axis='x', colors='white' if dark_mode else 'black')
@@ -314,11 +314,10 @@ class Plotter(Pinger):
         try:
             plt.get_current_fig_manager().set_window_title('Network Downtime Monitor')
         except Exception as e:
-            logger.exception(msg="Unable to set window title")
+            logger.exception("Unable to set window title")
 
-    def update_plot(self, frame):
+    def update_plot(self, frame: Any):
         """Update the plot with new data"""
-
         self.times.append(datetime.datetime.now())
         result = self.ping_host()
         self.latencies.append(result)
@@ -345,30 +344,33 @@ class Plotter(Pinger):
 
         return self.line,
 
-    def start_monitoring(self):
+    def start_monitoring(self) -> bool:
         """Start monitoring the network"""
-        logger.info(f"Plotting STARTED|Window: {seconds_to_hms(self.window)} at {seconds_to_hms(self.interval)} intervals ({self.window // self.interval} points)")
+        logger.info(f"Plotting:   STARTED|Window: {seconds_to_hms(self.window)} at {seconds_to_hms(self.interval)} intervals ({self.window // self.interval} points)")
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
-        x = ani.FuncAnimation(self.fig, self.update_plot, interval=self.interval * 1000, blit=True, cache_frame_data=False)
+        _ = ani.FuncAnimation(self.fig, self.update_plot, interval=self.interval * 1000, blit=True, cache_frame_data=False)
         plt.show()
         elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
-        logger.info(f"Plotting STOPPED|Plotted for: {elapsed}")
+        logger.info(f"Plotting:   STOPPED|Plotted for: {elapsed}")
         return self.interrupted
 
     def signal_handler(self, sig, frame):
         plt.close('all')
         self.interrupted = True
-        signal.signal(signal.SIGINT, signal.SIG_DFL)  # Restore the default signal handler for SIGINT
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)  # Restore the default signal handler for SIGTERM
+        # Restore the default signal handlers
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
 
 class Watcher(Pinger):
-    def __init__(self, target_host:str, threshold:float, interval:int):
+    """Class for watching the network without plotting"""
+
+    def __init__(self, target_host: str, threshold: float, interval: int):
         super().__init__(target_host=target_host, threshold=threshold)
         self.interval = interval
 
-    def start_monitoring(self):
+    def start_monitoring(self) -> bool:
         """Start monitoring the network"""
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -380,53 +382,70 @@ class Watcher(Pinger):
             return True
 
     class SignalInterrupt(Exception):
+        """Custom exception for signal interrupts"""
         pass
 
     def signal_handler(self, sig, frame):
-        signal.signal(signal.SIGINT, signal.SIG_DFL)  # Restore the default signal handler for SIGINT
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)  # Restore the default signal handler for SIGTERM
+        # Restore the default signal handlers
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
         raise self.SignalInterrupt  # Raise the custom exception to break out of the monitoring loop
 
 
-def check_running(stop:bool) -> list[psutil.Process]:
-    """Check if running instances of this app are running.
+def check_running(stop: bool) -> List[psutil.Process]:
+    """Check if running instances of this app exist optionally attempting
+    to stop them, returning any remaining running processes
 
     Args:
-        stop (bool): If True, attempt to stop those running processes
+        stop (bool): If True, attempt to stop the running processes
 
     Returns:
-        bool: True if remaining running processes exist,
-              False if no others are left in a running/runnable state
+        List[psutil.Process]: List of any remaining running processes
     """
     current_pid = os.getpid()
-    running_instances:list[psutil.Process] = []
+    running_instances: List[psutil.Process] = []
     for proc in psutil.process_iter(['name', 'cmdline', 'username']):
         try:
             if proc.pid != current_pid and proc.info['name'].startswith('python') and script_name in " ".join(proc.info['cmdline']):
                 if stop:
                     sys.stderr.write(f"Stopping: {proc.pid}")
-                    proc.terminate()  # Send SIGTERM to the process
+                    proc.terminate()
                     sys.stderr.write(f" (STOPPED)\n")
+                    sleep(1)  # Give the process a chance to log the stop
                 else:
                     running_instances.append(proc)
         except (psutil.NoSuchProcess, psutil.ZombieProcess) as e:
             sys.stderr.write(f" (IGNORED: {e.__class__.__name__})\n")
         except Exception as e:  # psutil.AccessDenied:
             sys.stderr.write(f" (FAILED: {e.__class__.__name__}: {proc.info['username']})\n")
-            running_instances.append(proc)  # If the above fails, it will not be removed
+            running_instances.append(proc)
     return running_instances
 
 
-if __name__ == '__main__':
+def configure_logger(level: int, console: bool, logfile: Path) -> logging.Logger:
+    """Configure the logger"""
+    logger = logging.getLogger(os.path.basename(sys.argv[0]))
+    level_width = max(len(name) for name in logging._levelToName.values())
+    formatter = logging.Formatter(fmt=f'%(asctime)s|%(process)+7s|%(levelname)-{level_width}s|%(message)s', datefmt='%Y-%m-%d %H:%M:%S%z')
+    logger.setLevel(level)
+    if console:
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    if logfile:
+        handler = logging.FileHandler(filename=logfile)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    return logger
 
+
+if __name__ == '__main__':
     start_time = datetime.datetime.now()
     script_name = os.path.basename(sys.argv[0])
-    logger = logging.getLogger(script_name)
+    args = parse_args()
+    logger = configure_logger(args.level, args.console, args.logfile)
 
     try:
-        args = parse_args()
-        kwargs = vars(args)
-
         running_instances = check_running(args.stop)
         if running_instances:
             sys.stderr.write(f"At least one other instance of {script_name} is still running: {', '.join(str(proc.pid) for proc in running_instances)}")
@@ -435,19 +454,7 @@ if __name__ == '__main__':
             sys.stderr.write("\n")
             sys.exit(1)
 
-        level_width = max(len(name) for name in logging._levelToName.values())
-        formatter = logging.Formatter(fmt=f'%(asctime)s|%(process)+7s|%(levelname)-{level_width}s|%(message)s', datefmt='%Y-%m-%d %H:%M:%S%z')
-        logger.setLevel(args.level)
-        if args.console:
-            handler = logging.StreamHandler()
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        if args.logfile:
-            handler = logging.FileHandler(filename=args.logfile)
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-
-        logger.info(f"Monitoring STARTED|CMD: {__file__}|ARGS: {kwargs}|LEVEL: {logging._levelToName[args.level]}")
+        logger.info(f"Monitoring: STARTED|CMD: {__file__}|ARGS: {vars(args)}|LEVEL: {logging._levelToName[args.level]}")
 
         interrupted = False
         if args.plot:
@@ -460,9 +467,8 @@ if __name__ == '__main__':
             watcher = Watcher(args.host, args.threshold, args.interval)
             watcher.start_monitoring()
 
-    except Exception:
-        logger.exception(msg="Unexpected exception")
+    except Exception as e:
+        logger.exception(f"Unexpected exception: {e}")
 
-    # finally:
     elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
-    logger.info(f"Monitoring STOPPED|Monitored for: {elapsed}")
+    logger.info(f"Monitoring: STOPPED|Monitored for: {elapsed}")
