@@ -1,6 +1,9 @@
 {
     "cSpell.words": [
+        "aiohttp",
+        "blit",
         "Deques",
+        "eufy",
         "facecolor",
         "fargs",
         "getpid",
@@ -9,6 +12,7 @@
         "LOGLEVEL",
         "NOTSET",
         "psutil",
+        "Pyth",
         "xlabel",
         "xlim",
         "xticks",
