@@ -128,6 +128,7 @@ def parse_args() -> argparse.Namespace:
         description="Monitor internet connection for downtime or unacceptable latency",
         formatter_class=UltimateHelpFormatter
     )
+    required_actions: list[argparse.Action] = []
     parser.add_argument(
         "--host",
         metavar="<host/ip>",
@@ -150,40 +151,53 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--threshold",
         metavar="<ms>",
-        help="The 'warning' latency threshold for logging (in ms). If this threshold is exceeded, a log entry will be made.",
-        type=int,
-        default=100
+        help="The 'warning' latency threshold for logging (in ms). If this threshold is exceeded, a WARNING log entry will be made.",
+        type=float,
+        default=100.0
     )
-    fileArg = parser.add_argument(
-        "--logfile",
-        metavar="<file>",
-        help="Logfile in which to log downtime. If not set, logs will not be saved",
-        type=writable_file,
+    required_actions.append(
+        parser.add_argument(
+            "--logfile",
+            metavar="<file>",
+            help="Logfile in which to log downtime. If not set, logs will not be saved",
+            type=writable_file
+        )
     )
-    consoleArg = parser.add_argument(
-        "--console",
-        action='store_true',
-        help="Log output to the console (stderr)"
+    required_actions.append(
+        parser.add_argument(
+            "--console",
+            action='store_true',
+            help="Log output to the console (stderr)"
+        )
     )
-    plotArg = parser.add_argument(
-        "--plot",
-        metavar="<window>",
-        nargs="?",
-        help="""An optional graph window in seconds, or use a suffix (E.g. '2d'):
-        's': Seconds
-        'm': Minutes
-        'h': Hours
-        'd': Days
-        'w': Weeks
-        If not set, a plot window will not be created.
-    """,
-        type=parse_time,
-        const='12h'
+    required_actions.append(
+        parser.add_argument(
+            "--plot",
+            metavar="<window>",
+            nargs="?",
+            help="""An optional graph window in seconds, or use a suffix (E.g. '2d'):
+            's': Seconds
+            'm': Minutes
+            'h': Hours
+            'd': Days
+            'w': Weeks
+            If not set, a plot window will not be created.
+        """,
+            type=parse_time,
+            const='12h'
+        )
     )
     parser.add_argument(
         "--dark",
         action='store_true',
-        help='Enable dark mode'
+        help='Enable dark mode for plotting'
+    )
+    required_actions.append(
+        parser.add_argument(
+            "--stop",
+            action='store_true',
+            help='Stop any running monitoring processes (exits immediately unless another monitoring task is specified)'
+        )
     )
     parser.add_argument(
         "--level",
@@ -196,8 +210,8 @@ def parse_args() -> argparse.Namespace:
 
     result = parser.parse_args()
 
-    if not (result.console or result.logfile or result.plot):
-        parser.error(f"You must specify at least one of: --{fileArg.dest}, --{consoleArg.dest}, or --{plotArg.dest}")
+    if not any(getattr(result, action.dest, None) for action in required_actions):
+        parser.error(f"You must specify at least one of: --{', --'.join(action.dest for action in required_actions)}")
 
     return result
 
@@ -333,13 +347,13 @@ class Plotter(Pinger):
 
     def start_monitoring(self):
         """Start monitoring the network"""
-        logger.info(f"Plotting started: Window is {seconds_to_hms(self.window)} at {seconds_to_hms(self.interval)} intervals ({self.window // self.interval} points)")
+        logger.info(f"Plotting STARTED|Window: {seconds_to_hms(self.window)} at {seconds_to_hms(self.interval)} intervals ({self.window // self.interval} points)")
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
         x = ani.FuncAnimation(self.fig, self.update_plot, interval=self.interval * 1000, blit=True, cache_frame_data=False)
         plt.show()
         elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
-        logger.info(f"Plotting stopped: Plotted for {elapsed}")
+        logger.info(f"Plotting STOPPED|Plotted for: {elapsed}")
         return self.interrupted
 
     def signal_handler(self, sig, frame):
@@ -374,32 +388,55 @@ class Watcher(Pinger):
         raise self.SignalInterrupt  # Raise the custom exception to break out of the monitoring loop
 
 
-# def check_if_running():  # TODO: This does not work
-#     current_pid = os.getpid()
-#     script_name = os.path.basename(sys.argv[0])
+def check_running(stop:bool) -> list[psutil.Process]:
+    """Check if running instances of this app are running.
 
-#     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-#         if proc.info['pid'] == current_pid:
-#             continue
-#         if script_name in proc.info['cmdline']:
-#             return True
-#     return False
+    Args:
+        stop (bool): If True, attempt to stop those running processes
 
+    Returns:
+        bool: True if remaining running processes exist,
+              False if no others are left in a running/runnable state
+    """
+    current_pid = os.getpid()
+    running_instances:list[psutil.Process] = []
+    for proc in psutil.process_iter(['name', 'cmdline', 'username']):
+        try:
+            if proc.pid != current_pid and proc.info['name'].startswith('python') and script_name in " ".join(proc.info['cmdline']):
+                if stop:
+                    sys.stderr.write(f"Stopping: {proc.pid}")
+                    proc.terminate()  # Send SIGTERM to the process
+                    sys.stderr.write(f" (STOPPED)\n")
+                else:
+                    running_instances.append(proc)
+        except (psutil.NoSuchProcess, psutil.ZombieProcess) as e:
+            sys.stderr.write(f" (IGNORED: {e.__class__.__name__})\n")
+        except Exception as e:  # psutil.AccessDenied:
+            sys.stderr.write(f" (FAILED: {e.__class__.__name__}: {proc.info['username']})\n")
+            running_instances.append(proc)  # If the above fails, it will not be removed
+    return running_instances
 
-logger = logging.getLogger(__name__)
-start_time = datetime.datetime.now()
 
 if __name__ == '__main__':
-    # if check_if_running():
-    #     print(f"Another instance of {sys.argv[0]} is already running.")
-    #     sys.exit(1)
+
+    start_time = datetime.datetime.now()
+    script_name = os.path.basename(sys.argv[0])
+    logger = logging.getLogger(script_name)
 
     try:
         args = parse_args()
         kwargs = vars(args)
 
+        running_instances = check_running(args.stop)
+        if running_instances:
+            sys.stderr.write(f"At least one other instance of {script_name} is still running: {', '.join(str(proc.pid) for proc in running_instances)}")
+            if not args.stop:
+                sys.stderr.write(" (try using --stop)")
+            sys.stderr.write("\n")
+            sys.exit(1)
+
         level_width = max(len(name) for name in logging._levelToName.values())
-        formatter = logging.Formatter(fmt=f'%(asctime)s|%(levelname)-{level_width}s|%(message)s', datefmt='%Y-%m-%d %H:%M:%S%z')
+        formatter = logging.Formatter(fmt=f'%(asctime)s|%(process)+7s|%(levelname)-{level_width}s|%(message)s', datefmt='%Y-%m-%d %H:%M:%S%z')
         logger.setLevel(args.level)
         if args.console:
             handler = logging.StreamHandler()
@@ -410,7 +447,7 @@ if __name__ == '__main__':
             handler.setFormatter(formatter)
             logger.addHandler(handler)
 
-        logger.info(f"Monitoring started: {__file__}: {kwargs} ({logging._levelToName[args.level]})")
+        logger.info(f"Monitoring STARTED|CMD: {__file__}|ARGS: {kwargs}|LEVEL: {logging._levelToName[args.level]}")
 
         interrupted = False
         if args.plot:
@@ -426,6 +463,6 @@ if __name__ == '__main__':
     except Exception:
         logger.exception(msg="Unexpected exception")
 
-    finally:
-        elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
-        logger.info(f"Monitoring stopped: Monitored for {elapsed}")
+    # finally:
+    elapsed = seconds_to_hms(int((datetime.datetime.now()-start_time).total_seconds()))
+    logger.info(f"Monitoring STOPPED|Monitored for: {elapsed}")
