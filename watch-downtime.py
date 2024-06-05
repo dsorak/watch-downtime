@@ -124,7 +124,7 @@ def parse_args() -> argparse.Namespace:
         pass
 
     parser = argparse.ArgumentParser(
-        description="Monitor internet connection for downtime or unacceptable latency",
+        description="Monitor your internet connection for downtime or unacceptable latency. You must choose a logging option, one of --logfile, --console, or --plot.",
         formatter_class=UltimateHelpFormatter
     )
     required_actions: List[argparse.Action] = []
@@ -166,7 +166,7 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(
             "--console",
             action='store_true',
-            help="Log output to the console (stderr)"
+            help="Log output to the console (stdout)"
         )
     )
     required_actions.append(
@@ -180,8 +180,7 @@ def parse_args() -> argparse.Namespace:
             'h': Hours
             'd': Days
             'w': Weeks
-            If not set, a plot window will not be created.
-        """,
+If not set, a plot window will not be created.""",
             type=parse_time,
             const='5h'
         )
@@ -295,7 +294,6 @@ class Plotter(Pinger):
 
         self.fig: fig.Figure
         self.ax: axes.Axes
-
         self.fig, self.ax = plt.subplots()
 
         self.fig.patch.set_facecolor('#303030' if dark_mode else 'white')
@@ -393,7 +391,7 @@ class Watcher(Pinger):
 
 
 def check_running(stop: bool) -> List[psutil.Process]:
-    """Check if running instances of this app exist optionally attempting
+    """Check if running instances of this app exist, optionally attempting
     to stop them, returning any remaining running processes
 
     Args:
@@ -429,7 +427,7 @@ def configure_logger(level: int, console: bool, logfile: Path) -> logging.Logger
     formatter = logging.Formatter(fmt=f'%(asctime)s|%(process)+7s|%(levelname)-{level_width}s|%(message)s', datefmt='%Y-%m-%d %H:%M:%S%z')
     logger.setLevel(level)
     if console:
-        handler = logging.StreamHandler()
+        handler = logging.StreamHandler(stream=sys.stdout)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     if logfile:
@@ -458,13 +456,13 @@ if __name__ == '__main__':
 
         interrupted = False
         if args.plot:
-            plotter = Plotter(args.host, args.threshold, args.interval, args.plot, args.dark)
+            plotter = Plotter(target_host=args.host, threshold=args.threshold, interval=args.interval, window=args.plot, dark_mode=args.dark)
             interrupted = plotter.start_monitoring()
 
         # If the plotter exits without being interrupted (not do due to SIGINT or SIGTERM)
         # AND console logging or file logging is enabled, continue monitoring
         if not interrupted and (args.console or args.logfile):
-            watcher = Watcher(args.host, args.threshold, args.interval)
+            watcher = Watcher(target_host=args.host, threshold=args.threshold, interval=args.interval)
             watcher.start_monitoring()
 
     except Exception as e:
