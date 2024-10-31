@@ -105,7 +105,7 @@ def writable_file(filepath: str) -> Path:
 
 
 def seconds_to_hms(seconds: int) -> str:
-    """Convert seconds to a human-readable format of hours, minutes, and seconds."""
+    """Convert seconds to a human-readable format of hours, minutes, and seconds"""
     time = []
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -124,33 +124,37 @@ def parse_args() -> argparse.Namespace:
         pass
 
     parser = argparse.ArgumentParser(
-        description="Monitor your internet connection for downtime or unacceptable latency. You must choose a logging option, one of --logfile, --console, or --plot.",
+        description="""Monitor your internet connection for downtime or unacceptable latency. You must
+choose a logging option, one of --logfile, --console, or --plot.""",
         formatter_class=UltimateHelpFormatter
     )
     required_actions: List[argparse.Action] = []
     parser.add_argument(
         "--host",
         metavar="<host/ip>",
-        help="Hostname to ping for downtime testing",
+        help="""The hostname to ping for downtime testing
+""",
         default="google.com"
     )
     parser.add_argument(
         "--interval",
         metavar="<span>",
-        help="""The ping interval in seconds, or use a suffix (E.g. '1m'):
-        's': Seconds
-        'm': Minutes
-        'h': Hours
-        'd': Days
-        'w': Weeks
-    """,
+        help="""The ping interval in seconds, or use a suffix (e.g. '1m'):
+    's': Seconds
+    'm': Minutes
+    'h': Hours
+    'd': Days
+    'w': Weeks
+""",
         type=parse_time,
         default='10s'
     )
     parser.add_argument(
         "--threshold",
         metavar="<ms>",
-        help="The 'warning' latency threshold for logging (in ms). If this threshold is exceeded, a WARNING log entry will be made.",
+        help="""The "warning" latency threshold for logging (in ms). If this
+threshold is exceeded, a WARNING log entry will be made.
+""",
         type=float,
         default=100.0
     )
@@ -158,7 +162,9 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(
             "--logfile",
             metavar="<file>",
-            help="Logfile in which to log downtime. If not set, logs will not be saved",
+            help="""Logfile in which to log downtime. If not set (None), logs
+will NOT be saved.
+""",
             type=writable_file
         )
     )
@@ -166,7 +172,8 @@ def parse_args() -> argparse.Namespace:
         parser.add_argument(
             "--console",
             action='store_true',
-            help="Log output to the console (stdout)"
+            help="""If specified, send log output to the console (stdout)
+"""
         )
     )
     required_actions.append(
@@ -174,13 +181,14 @@ def parse_args() -> argparse.Namespace:
             "--plot",
             metavar="<window>",
             nargs="?",
-            help="""An optional graph window in seconds, or use a suffix (E.g. '2d'):
-            's': Seconds
-            'm': Minutes
-            'h': Hours
-            'd': Days
-            'w': Weeks
-If not set, a plot window will not be created.""",
+            help="""Optional graph window in seconds, or use a suffix (e.g. '2d'):
+    's': Seconds
+    'm': Minutes
+    'h': Hours
+    'd': Days
+    'w': Weeks
+If not specified (None), a plot window will NOT be created
+""",
             type=parse_time,
             const='5h'
         )
@@ -188,20 +196,26 @@ If not set, a plot window will not be created.""",
     parser.add_argument(
         "--dark",
         action='store_true',
-        help='Enable dark mode for plotting'
+        help="""Enable dark mode for plotting
+"""
     )
     required_actions.append(
         parser.add_argument(
             "--stop",
             action='store_true',
-            help='Stop any running monitoring processes (exits immediately unless another monitoring task is specified)'
+            help="""Stop any running monitoring processes (exits immediately
+unless another monitoring task is specified)
+"""
         )
     )
     parser.add_argument(
         "--level",
         metavar="<log_level>",
-        help="""Sets the logging level and must be one of: CRITICAL, FATAL, ERROR, WARNING, INFO, DEBUG, NOTSET
-    If not specified, the environment variable "LOGLEVEL" will be used (if set).""",
+        help="""Sets the logging level and must be one of:
+ CRITICAL, FATAL, ERROR, WARNING, INFO, DEBUG, NOTSET
+If not specified, the environment variable "LOGLEVEL" will
+be used (if set)
+""",
         type=set_log_level,
         default=os.environ.get('LOGLEVEL', 'INFO')
     )
